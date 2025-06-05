@@ -1,0 +1,61 @@
+{
+  "manifest_version": 3,
+  "name": "Cabinet",
+  "version": "1.0",
+  "description": "Add folder functionality to your favorite AI chat platforms.",
+  "short_name": "Cabinet",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_title": "ChatOrganizer",
+    "default_icon": {
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": ["content_scripts/main.js"],
+      "css": ["content_scripts/styles.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background/background.js",
+    "type": "module"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [ 
+        "images/gemini.png",
+        "images/claude.png",
+        "images/chatgpt.png",
+        "icons/icon16.png",
+        "icons/icon32.png",
+        "icons/icon48.png",
+        "icons/icon128.png",
+        "dist/ui/panel.html",
+        "dist/ui/assets/*"
+      ],
+      "matches": [ 
+        "https://gemini.google.com/*", 
+        "https://claude.ai/*", 
+        "https://chatgpt.com/*" 
+      ]
+    }
+  ]
+}

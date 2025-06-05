@@ -1,0 +1,20 @@
+/* content_scripts/styles.css */
+
+#chat-organizer-panel-iframe {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 450px; /* Adjust as needed */
+  max-height: 750px; /* The panel will grow up to this height */
+  min-height: 750px; /* Prevent the panel from being too small */
+  border: 1px solid #ccc; /* Light border for definition, can be none */
+  border-radius: 8px; /* Optional rounded corners */
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.15); /* Optional shadow for depth */
+  z-index: 99999999; /* Ensure it's on top of most page elements */
+  display: block; /* Initially visible */
+  background-color: #fff; /* Ensure iframe has a background if its content is transparent initially */
+}
+
+#chat-organizer-panel-iframe.co-panel-hidden {
+  display: none !important;
+}

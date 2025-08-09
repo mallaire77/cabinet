@@ -7,7 +7,10 @@ export default defineConfig({
   build: {
     outDir: 'dist/ui', // Output directory for the UI bundle
     rollupOptions: {
-      input: 'src/main.jsx', // Specify the entry point for the JS bundle
+      input: {
+        main: 'src/main.jsx',
+        options: 'src/optionsMain.jsx',
+      }, // multiple entry points for panel and options
       output: {
         // Ensure assets are named predictably for extension use
         entryFileNames: 'assets/[name].js',

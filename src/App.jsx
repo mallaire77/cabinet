@@ -1,6 +1,7 @@
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { Collapse } from 'bootstrap';
+import { useRef } from 'preact/hooks';
+import { getSavedHandle, readFoldersFromFile, writeFoldersToFile, startPollingForExternalChanges, serializeFoldersToMarkdown } from './utils/filePersistence';
 import Fuse from 'fuse.js';
 
 // To use a Bootstrap icon, we need the stylesheet
@@ -30,6 +31,13 @@ const customAccordionStyle = `
 export function App() {
   const [folders, setFolders] = useState([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [hasHandle, setHasHandle] = useState(false);
+  const [configError, setConfigError] = useState('');
+  const fileHandleRef = useRef(null);
+  const stopPollingRef = useRef(null);
+  const lastWrittenRef = useRef('');
+  const ignorePollUntilRef = useRef(0);
   const [newFolderName, setNewFolderName] = useState("");
   const [editingFolderId, setEditingFolderId] = useState(null);
   const [editingFolderName, setEditingFolderName] = useState("");
@@ -50,26 +58,116 @@ export function App() {
     null
   ]; // Bootstrap theme colors + default
 
-  // Load folders from storage on mount
+  // Load from markdown file if configured; fallback to storage for legacy
   useEffect(() => {
-    chrome.storage.local.get('folders', (data) => {
-      if (data.folders) {
-        setFolders(data.folders);
+    (async () => {
+      try {
+        const handle = await getSavedHandle();
+        if (handle) {
+          setHasHandle(true);
+          fileHandleRef.current = handle;
+          // Check permission status in this context
+          const perm = await handle.queryPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            const initialFolders = await readFoldersFromFile(handle);
+            setFolders(initialFolders);
+            setConfigured(true);
+          } else {
+            setConfigured(false);
+            setConfigError('This page needs access to read your selected file.');
+          }
+          // start polling for external edits
+          stopPollingRef.current = startPollingForExternalChanges(handle, (incoming) => {
+            if (Date.now() < ignorePollUntilRef.current) return;
+            const incomingText = serializeFoldersToMarkdown(incoming);
+            if (incomingText !== lastWrittenRef.current) {
+              setFolders(incoming);
+            }
+          });
+        } else {
+          // Not configured: do not load legacy data; show configure screen
+        }
+      } catch (e) {
+        setConfigError(e.message || String(e));
+      } finally {
+        setIsLoaded(true);
       }
-      setIsLoaded(true); // Mark as loaded after fetching
-    });
+    })();
+    return () => {
+      if (stopPollingRef.current) stopPollingRef.current();
+    };
   }, []);
 
-  // Save folders to storage whenever they change
+  // Listen for configuration changes from options page
   useEffect(() => {
-    if (isLoaded) {
-        chrome.storage.local.set({ folders });
+    function onChanged(changes, area) {
+      if (area !== 'local') return;
+      if (changes.mdConfigured) {
+        (async () => {
+          try {
+            const handle = await getSavedHandle();
+            if (handle) {
+              fileHandleRef.current = handle;
+              const perm = await handle.queryPermission({ mode: 'read' });
+              if (perm === 'granted') {
+                const initialFolders = await readFoldersFromFile(handle);
+                setFolders(initialFolders);
+                setConfigured(true);
+              } else {
+                setConfigured(false);
+              }
+              if (stopPollingRef.current) stopPollingRef.current();
+              stopPollingRef.current = startPollingForExternalChanges(handle, (incoming) => {
+                if (Date.now() < ignorePollUntilRef.current) return;
+                const incomingText = serializeFoldersToMarkdown(incoming);
+                if (incomingText !== lastWrittenRef.current) {
+                  setFolders(incoming);
+                }
+              });
+            } else {
+              // cleared
+              if (stopPollingRef.current) stopPollingRef.current();
+              fileHandleRef.current = null;
+              setConfigured(false);
+              setHasHandle(false);
+              setFolders([]);
+            }
+          } catch (e) {
+            setConfigError(e.message || String(e));
+          }
+        })();
+      }
     }
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+
+  // Persist to chosen markdown file or local storage
+  useEffect(() => {
+    if (!isLoaded) return;
+    (async () => {
+      try {
+        if (fileHandleRef.current) {
+          const serialized = serializeFoldersToMarkdown(folders);
+          if (serialized !== lastWrittenRef.current) {
+            // Temporarily ignore polling echoes to avoid flicker/reverts
+            ignorePollUntilRef.current = Date.now() + 1200;
+            await writeFoldersToFile(fileHandleRef.current, folders);
+            lastWrittenRef.current = serialized;
+          }
+        } else {
+          // Not configured: do not persist; hint screen only
+        }
+      } catch (e) {
+        console.warn('Failed to persist folders', e);
+      }
+    })();
   }, [folders, isLoaded]);
 
-  // Listen for changes in storage from other tabs
+  // Listen for changes in storage from other tabs (legacy). Ignore when file-backed is active.
   useEffect(() => {
     const handleStorageChange = (changes, area) => {
+      if (fileHandleRef.current) return; // file-backed mode controls state
       if (area === 'local' && changes.folders) {
         setFolders(changes.folders.newValue);
       }
@@ -82,13 +180,7 @@ export function App() {
     };
   }, []);
 
-  // Initialize Bootstrap Collapse functionality for the accordion
-  useEffect(() => {
-    const accordionElementList = document.querySelectorAll('.accordion .accordion-collapse');
-    accordionElementList.forEach((el) => {
-      new Collapse(el, { toggle: false });
-    });
-  }, [folders]); // Re-initialize when folders change
+  // Removed Bootstrap JS collapse to avoid conflicts; we control open state in React only
 
   const handleCreateFolder = () => {
     if (newFolderName.trim() === '') return;
@@ -178,11 +270,9 @@ export function App() {
   };
 
   const handleToggleFolder = (folderId) => {
-    setFolders(
-      folders.map(folder =>
-        folder.id === folderId ? { ...folder, isOpen: !folder.isOpen } : folder
-      )
-    );
+    setFolders(prev => prev.map(folder =>
+      folder.id === folderId ? { ...folder, isOpen: !folder.isOpen } : folder
+    ));
   };
 
   const handleChatRenameClick = (e, chat) => {
@@ -207,12 +297,13 @@ export function App() {
     e.preventDefault();
     e.stopPropagation();
 
-    setFolders(folders.map(folder => {
+    setFolders(prev => prev.map(folder => {
       if (folder.id === folderId) {
-        const currentColor = folder.color;
+        const currentColor = folder.color ?? null;
         const currentIndex = colors.indexOf(currentColor);
-        const nextIndex = (currentIndex + 1) % colors.length;
-        return { ...folder, color: colors[nextIndex] };
+        const nextIndex = (currentIndex >= 0 ? currentIndex : colors.length - 1) + 1;
+        const normalizedIndex = nextIndex % colors.length;
+        return { ...folder, color: colors[normalizedIndex] };
       }
       return folder;
     }));
@@ -238,12 +329,52 @@ export function App() {
     return { ...folder, chats: filteredChats };
   }).filter(folder => filter === 'all' || folder.chats.length > 0);
 
+  if (!configured) {
+    return (
+      <div class="d-flex flex-column h-100 align-items-center justify-content-center p-3 text-center">
+        <h2 class="h5 mb-2">Configure persistence</h2>
+        {hasHandle ? (
+          <>
+            <p class="text-muted mb-3">This panel needs permission to access the selected file.</p>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" onClick={async () => {
+                try {
+                  const res = await fileHandleRef.current.requestPermission({ mode: 'readwrite' });
+                  if (res === 'granted') {
+                    const initialFolders = await readFoldersFromFile(fileHandleRef.current);
+                    setFolders(initialFolders);
+                    setConfigured(true);
+                    setConfigError('');
+                  } else {
+                    setConfigError('Permission denied.');
+                  }
+                } catch (e) {
+                  setConfigError(e.message || String(e));
+                }
+              }}>Grant access</button>
+              <button class="btn btn-outline-secondary" onClick={() => chrome.runtime.openOptionsPage()}>Open settings</button>
+            </div>
+            {configError && <p class="text-danger small mt-2">{configError}</p>}
+          </>
+        ) : (
+          <>
+            <p class="text-muted mb-3">Open extension options and select a Markdown file to act as your Cabinet database.</p>
+            <a class="btn btn-primary" href="#" onClick={() => chrome.runtime.openOptionsPage()}>Open settings</a>
+            {configError && <p class="text-danger small mt-2">{configError}</p>}
+          </>
+        )}
+        <hr class="w-100 my-3" />
+        <p class="small text-muted">Using in-memory storage until configured.</p>
+      </div>
+    );
+  }
+
   return (
     <>
       <style>{customAccordionStyle}</style>
       <div class="d-flex flex-column h-100">
         {/* Fixed Header */}
-        <div class="p-3" style={{ borderBottom: '1px solid #dee2e6' }}>
+        <div class="co-panel-header p-3">
           {/* Create Folder Section */}
           <div class="input-group mb-3">
             <input 
@@ -269,24 +400,24 @@ export function App() {
           </div>
 
           {/* Filter Section */}
-          <div class="btn-group w-100" role="group" aria-label="Platform filters">
-            <button type="button" class={`btn btn-outline-secondary d-flex align-items-center justify-content-center ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+          <div class="btn-group w-100 co-toolbar" role="group" aria-label="Platform filters">
+            <button type="button" class={`btn btn-outline-secondary btn-icon d-flex align-items-center justify-content-center ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
               <i class="bi bi-collection"></i>
             </button>
-            <button type="button" class={`btn btn-outline-secondary d-flex align-items-center justify-content-center ${filter === 'gemini' ? 'active' : ''}`} onClick={() => setFilter('gemini')}>
+            <button type="button" class={`btn btn-outline-secondary btn-icon d-flex align-items-center justify-content-center ${filter === 'gemini' ? 'active' : ''}`} onClick={() => setFilter('gemini')}>
               <img src={chrome.runtime.getURL('images/gemini.png')} style={imgStyle} alt="Gemini" />
             </button>
-            <button type="button" class={`btn btn-outline-secondary d-flex align-items-center justify-content-center ${filter === 'claude' ? 'active' : ''}`} onClick={() => setFilter('claude')}>
+            <button type="button" class={`btn btn-outline-secondary btn-icon d-flex align-items-center justify-content-center ${filter === 'claude' ? 'active' : ''}`} onClick={() => setFilter('claude')}>
               <img src={chrome.runtime.getURL('images/claude.png')} style={imgStyle} alt="Claude" />
             </button>
-            <button type="button" class={`btn btn-outline-secondary d-flex align-items-center justify-content-center ${filter === 'chatgpt' ? 'active' : ''}`} onClick={() => setFilter('chatgpt')}>
+            <button type="button" class={`btn btn-outline-secondary btn-icon d-flex align-items-center justify-content-center ${filter === 'chatgpt' ? 'active' : ''}`} onClick={() => setFilter('chatgpt')}>
               <img src={chrome.runtime.getURL('images/chatgpt.png')} style={imgStyle} alt="ChatGPT" />
             </button>
           </div>
         </div>
 
         {/* Scrollable Body */}
-        <div class="p-3" style={{ flexGrow: 1, overflowY: 'scroll' }}>
+        <div class="co-panel-body p-3">
           {/* Folders Section */}
           <div class="accordion" id="folderAccordion">
             {filteredFolders.map(folder => (
@@ -315,8 +446,6 @@ export function App() {
                         class={`accordion-button no-arrow ps-1 pe-2 ${!folder.isOpen ? 'collapsed' : ''}`}
                         style={{backgroundColor: folder.color ? 'transparent' : ''}}
                         type="button"
-                        data-bs-toggle="collapse"
-                        data-bs-target={`#collapse${folder.id}`}
                         aria-expanded={folder.isOpen ? "true" : "false"}
                         aria-controls={`collapse${folder.id}`}
                         onClick={() => handleToggleFolder(folder.id)}
@@ -331,7 +460,7 @@ export function App() {
                     </>
                   )}
                 </h2>
-                <div id={`collapse${folder.id}`} class={`accordion-collapse collapse ${folder.isOpen ? 'show' : ''}`} aria-labelledby={`heading${folder.id}`} data-bs-parent="#folderAccordion">
+                <div id={`collapse${folder.id}`} class={`accordion-collapse collapse ${folder.isOpen ? 'show' : ''}`} aria-labelledby={`heading${folder.id}`}>
                   <div class="accordion-body p-0">
                     <div class="list-group list-group-flush">
                       {folder.chats.map(chat => (

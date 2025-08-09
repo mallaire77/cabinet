@@ -14,6 +14,10 @@ This extension injects a panel into the supported AI chat websites, which can be
 3.  A panel will appear on the top right side of the page.
 4.  Click the icon again to hide the panel.
 
+### Configure Markdown persistence
+
+- Open the extension options (right-click the extension icon → Options, or from `chrome://extensions` → Details → Extension options). Then select a `.md` file to act as your database. The panel will show a configure screen until this is set.
+
 ## Building from Source (for Developers)
 
 1.  **Install dependencies:**

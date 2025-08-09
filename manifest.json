@@ -38,17 +38,23 @@
     "service_worker": "background/background.js",
     "type": "module"
   },
+  "options_ui": {
+    "page": "dist/ui/options.html",
+    "open_in_tab": true
+  },
   "web_accessible_resources": [
     {
       "resources": [ 
         "images/gemini.png",
         "images/claude.png",
         "images/chatgpt.png",
+        "sample.md",
         "icons/icon16.png",
         "icons/icon32.png",
         "icons/icon48.png",
         "icons/icon128.png",
         "dist/ui/panel.html",
+        "dist/ui/options.html",
         "dist/ui/assets/*"
       ],
       "matches": [ 

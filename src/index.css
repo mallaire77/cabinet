@@ -1,4 +1,34 @@
 /* Add any global custom styles here */
 body {
   /* Example: Adjust body padding if needed, though Bootstrap handles much of this */
-} 
+}
+
+/* minimal styles for configure screen */
+.configure-empty { text-align: center; padding: 2rem; }
+
+/* Panel refinements */
+.co-panel-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  backdrop-filter: blur(6px);
+  background: rgba(255,255,255,0.9);
+  border-bottom: 1px solid #dee2e6;
+}
+
+.co-panel-body {
+  flex-grow: 1;
+  overflow-y: auto;
+  background: #f8f9fa;
+}
+
+.co-toolbar { gap: 0.5rem; }
+
+.btn-icon {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}

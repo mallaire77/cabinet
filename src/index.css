@@ -22,7 +22,7 @@ body {
   background: #f8f9fa;
 }
 
-.co-toolbar { gap: 0.5rem; }
+.co-toolbar { gap: 0; }
 
 .btn-icon {
   width: 2rem;
